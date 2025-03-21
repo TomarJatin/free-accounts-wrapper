@@ -1,5 +1,4 @@
 import { prisma } from '../prisma';
-import { Prisma } from '@prisma/client';
 
 interface ServiceInstance {
   apiUrl: string;
@@ -144,7 +143,7 @@ export class ServiceManager {
 
     // Reset counters for all services if needed
     return Promise.all(
-      services.map((service: any) => this.resetCounterIfNeeded(service, serviceType))
+      services.map((service: Service) => this.resetCounterIfNeeded(service, serviceType))
     );
   }
 
