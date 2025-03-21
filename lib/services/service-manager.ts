@@ -1,4 +1,5 @@
 import { prisma } from '../prisma';
+import { Prisma } from '@prisma/client';
 
 interface ServiceInstance {
   apiUrl: string;
@@ -11,7 +12,48 @@ interface UpdateServiceInstance {
   limit?: number;
 }
 
+type Service = {
+  id: string;
+  apiUrl: string;
+  counter: number;
+  limit: number;
+  lastResetDate: Date;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 export class ServiceManager {
+  private static isMonthPassed(lastResetDate: Date): boolean {
+    const now = new Date();
+    return (
+      now.getFullYear() !== lastResetDate.getFullYear() ||
+      now.getMonth() !== lastResetDate.getMonth()
+    );
+  }
+
+  private static async resetCounterIfNeeded(service: Service, serviceType: 'voiceover' | 'image') {
+    if (this.isMonthPassed(service.lastResetDate)) {
+      if (serviceType === 'voiceover') {
+        return prisma.voiceoverService.update({
+          where: { id: service.id },
+          data: {
+            counter: 0,
+            lastResetDate: new Date(),
+          },
+        });
+      } else {
+        return prisma.imageGenerationService.update({
+          where: { id: service.id },
+          data: {
+            counter: 0,
+            lastResetDate: new Date(),
+          },
+        });
+      }
+    }
+    return service;
+  }
+
   static async addServiceInstances(instances: ServiceInstance[]) {
     const results = await Promise.all(
       instances.map(async (instance) => {
@@ -20,6 +62,7 @@ export class ServiceManager {
             data: {
               apiUrl: instance.apiUrl,
               limit: instance.limit,
+              lastResetDate: new Date(),
             },
           });
         } else {
@@ -27,6 +70,7 @@ export class ServiceManager {
             data: {
               apiUrl: instance.apiUrl,
               limit: instance.limit,
+              lastResetDate: new Date(),
             },
           });
         }
@@ -36,7 +80,7 @@ export class ServiceManager {
   }
 
   static async getLeastUsedVoiceoverService() {
-    return prisma.voiceoverService.findFirst({
+    const service = await prisma.voiceoverService.findFirst({
       where: {
         counter: {
           lt: prisma.voiceoverService.fields.limit,
@@ -46,10 +90,15 @@ export class ServiceManager {
         counter: 'asc',
       },
     });
+
+    if (service) {
+      return this.resetCounterIfNeeded(service, 'voiceover');
+    }
+    return null;
   }
 
   static async getLeastUsedImageService() {
-    return prisma.imageGenerationService.findFirst({
+    const service = await prisma.imageGenerationService.findFirst({
       where: {
         counter: {
           lt: prisma.imageGenerationService.fields.limit,
@@ -59,6 +108,11 @@ export class ServiceManager {
         counter: 'asc',
       },
     });
+
+    if (service) {
+      return this.resetCounterIfNeeded(service, 'image');
+    }
+    return null;
   }
 
   static async incrementCounter(serviceId: string, serviceType: 'voiceover' | 'image') {
@@ -76,19 +130,22 @@ export class ServiceManager {
   }
 
   static async getAllServices(serviceType: 'voiceover' | 'image') {
-    if (serviceType === 'voiceover') {
-      return prisma.voiceoverService.findMany({
-        orderBy: {
-          createdAt: 'desc',
-        },
-      });
-    } else {
-      return prisma.imageGenerationService.findMany({
-        orderBy: {
-          createdAt: 'desc',
-        },
-      });
-    }
+    const services = serviceType === 'voiceover'
+      ? await prisma.voiceoverService.findMany({
+          orderBy: {
+            createdAt: 'desc',
+          },
+        })
+      : await prisma.imageGenerationService.findMany({
+          orderBy: {
+            createdAt: 'desc',
+          },
+        });
+
+    // Reset counters for all services if needed
+    return Promise.all(
+      services.map(service => this.resetCounterIfNeeded(service, serviceType))
+    );
   }
 
   static async updateService(
